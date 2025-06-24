@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>역사 게시판</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f7f7f7; margin: 0; padding: 0; }
+    .container { max-width: 700px; margin: 40px auto; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px #0001; padding: 32px; }
+    h1 { text-align: center; }
+    form { display: flex; flex-direction: column; gap: 8px; margin-bottom: 24px; }
+    input, textarea, select { padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+    button { padding: 10px; background: #1976d2; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #1565c0; }
+    .post-list { margin-top: 24px; }
+    .post { background: #f1f1f1; border-radius: 6px; padding: 16px; margin-bottom: 12px; position: relative; }
+    .post-title { font-weight: bold; font-size: 1.1em; }
+    .post-era { font-size: 0.95em; color: #1976d2; margin-bottom: 4px; }
+    .post-content { margin: 8px 0; }
+    .post-date { font-size: 0.9em; color: #888; }
+    .post-actions { position: absolute; top: 16px; right: 16px; }
+    .post-actions button { background: #e53935; margin-left: 4px; }
+    .post-actions button.edit { background: #43a047; }
+    .comments-space { margin-top: 12px; padding: 10px; border: 1px solid #e0e0e0; border-radius: 6px; background: #fafbfc; }
+    .comment-toggle { background: #1976d2; color: #fff; border: none; border-radius: 4px; cursor: pointer; padding: 6px 12px; }
+    .comment-toggle:hover { background: #1565c0; }
+    .comment-form { display: none; margin-top: 10px; }
+    .comment-form input { width: calc(50% - 8px); margin-right: 8px; }
+    .question-space { margin-top: 16px; }
+    .question-space .questions-section { display: none; border: 1px solid #ffe0b2; border-radius: 6px; background: #fff8e1; padding: 10px 12px; min-height: 32px; }
+    .question-space .question-form { display: none; margin-top: 10px; }
+    .debate-space { margin-top: 16px; }
+    .debate-space .debate-section { display: none; border: 1px solid #b3e5fc; border-radius: 6px; background: #e1f5fe; padding: 10px 12px; min-height: 32px; }
+    .news-block { margin: 32px 0; padding: 20px; border: 2px solid #1976d2; border-radius: 10px; background: #f0f7ff; }
+    .news-title { font-weight: bold; color: #1976d2; font-size: 1.15em; margin-bottom: 8px; }
+    .news-content { margin: 6px 0; }
+    .news-date { font-size: 0.9em; color: #888; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>역사 게시판</h1>
+    <form id="postForm">
+      <input type="text" id="title" placeholder="제목 (예: 조선 건국)" required />
+      <select id="era" required>
+        <option value="">시대 선택</option>
+        <option value="선사시대">선사시대</option>
+        <option value="삼국시대">삼국시대</option>
+        <option value="고려시대">고려시대</option>
+        <option value="조선시대">조선시대</option>
+        <option value="근현대">근현대</option>
+        <option value="세계사">세계사</option>
+      </select>
+      <textarea id="content" placeholder="역사적 사건, 인물, 유적 등 내용을 입력하세요." rows="4" required></textarea>
+      <button type="submit">글 작성</button>
+    </form>
+    <div class="post-list" id="postList"></div>
+    <div id="pagination"></div>
+    <div id="extraArea"></div>
+    <div id="newsArea"></div>
+  </div>
+  <script>
+    const API_BASE = 'http://crud.tlol.me/user1/history';
+    let page = 1;
+    let pageSize = 5;
+    let editingId = null;
+
+    async function fetchPosts() {
+      const res = await fetch(`${API_BASE}?page=${page}&pageSize=${pageSize}`);
+      const json = await res.json();
+      renderPosts(json.data);
+      renderPagination(json.total, json.page, json.pageSize);
+    }
+
+    function renderPosts(posts) {
+      const list = document.getElementById('postList');
+      if (!posts.length) {
+        list.innerHTML = '<p>역사 관련 게시글이 없습니다.</p>';
+        return;
+      }
+      list.innerHTML = posts.map(post => `
+        <div class="post" id="post-${post.id}">
+          <div class="post-title">${post.title}</div>
+          <div class="post-era">${post.era ? post.era : ''}</div>
+          <div class="post-content">${post.content}</div>
+          <div class="post-date">${new Date(post.createdAt).toLocaleString()}</div>
+          <div class="post-actions">
+            <button class="edit" onclick="editPost('${post.id}', '${post.title.replace(/'/g, '\'')}', '${post.content.replace(/'/g, '\'')}')">수정</button>
+            <button onclick="deletePost('${post.id}')">삭제</button>
+          </div>
+          <div class="comments-space">
+            <div style="font-weight:bold; margin:10px 0 4px 0; color:#1976d2;">댓글</div>
+            <div class="comments-section" id="comments-${post.id}" style="display:none; border:1px solid #e0e0e0; border-radius:6px; background:#fafbfc; padding:10px 12px; min-height:32px;"></div>
+            <button onclick="toggleCommentForm('${post.id}')" class="comment-toggle" style="margin-top:8px;">댓글 달기/보기</button>
+            <form class="comment-form" id="comment-form-${post.id}" style="display:none; margin-top:10px;">
+              <input type="text" id="comment-author-${post.id}" placeholder="이름" required style="width:120px;" />
+              <input type="text" id="comment-content-${post.id}" placeholder="댓글 내용" required style="width:300px;" />
+              <button type="submit">등록</button>
+            </form>
+          </div>
+        </div>
+      `).join('');
+      posts.forEach(post => {
+        document.getElementById(`comment-form-${post.id}`).onsubmit = function(e) {
+          e.preventDefault();
+          addComment(post.id);
+        };
+      });
+      // 질문/토론 공간을 게시글 아래에 따로 렌더링
+      const extraArea = document.getElementById('extraArea');
+      if (extraArea) {
+        extraArea.innerHTML = '';
+      }
+      // 뉴스 공간 렌더링
+      const newsArea = document.getElementById('newsArea');
+      if (newsArea) {
+        newsArea.innerHTML = `
+          <div class="news-block" style="margin:32px 0; padding:20px; border:2px solid #1976d2; border-radius:10px; background:#f0f7ff;">
+            <div style="font-weight:bold; color:#1976d2; font-size:1.15em; margin-bottom:8px;">역사 소식/뉴스 올리기</div>
+            <button onclick="toggleNewsForm()" class="comment-toggle" style="background:#1976d2; margin-bottom:12px;">소식/뉴스 작성하기</button>
+            <form id="newsForm" style="display:none; flex-direction:column; gap:8px; margin-bottom:16px;">
+              <input type="text" id="news-title" placeholder="제목" required style="padding:8px; border-radius:4px; border:1px solid #ccc;" />
+              <textarea id="news-content" placeholder="내용" rows="3" required style="padding:8px; border-radius:4px; border:1px solid #ccc;"></textarea>
+              <button type="submit" style="background:#1976d2; color:#fff;">등록</button>
+            </form>
+            <div id="newsList"></div>
+          </div>
+        `;
+        document.getElementById('newsForm').onsubmit = function(e) {
+          e.preventDefault();
+          addNews();
+        };
+        fetchNews();
+      }
+    }
+
+    function renderPagination(total, currentPage, pageSize) {
+      const totalPages = Math.ceil(total / pageSize);
+      let html = '';
+      for (let i = 1; i <= totalPages; i++) {
+        html += `<button onclick="goToPage(${i})" ${i === currentPage ? 'disabled' : ''}>${i}</button> `;
+      }
+      document.getElementById('pagination').innerHTML = html;
+    }
+
+    function goToPage(p) {
+      page = p;
+      fetchPosts();
+    }
+
+    document.getElementById('postForm').onsubmit = async function(e) {
+      e.preventDefault();
+      const title = document.getElementById('title').value.trim();
+      const content = document.getElementById('content').value.trim();
+      if (!title || !content) return;
+      if (editingId) {
+        await fetch(`${API_BASE}/${editingId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, content })
+        });
+        editingId = null;
+      } else {
+        await fetch(API_BASE, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, content })
+        });
+      }
+      document.getElementById('postForm').reset();
+      fetchPosts();
+    };
+
+    window.editPost = function(id, title, content) {
+      editingId = id;
+      document.getElementById('title').value = title;
+      document.getElementById('content').value = content;
+      document.getElementById('title').focus();
+    };
+
+    window.deletePost = async function(id) {
+      if (!confirm('정말 삭제하시겠습니까?')) return;
+      await fetch(`${API_BASE}/${id}`, { method: 'DELETE' });
+      fetchPosts();
+    };
+
+    function toggleCommentForm(postId) {
+      const form = document.getElementById(`comment-form-${postId}`);
+      const section = document.getElementById(`comments-${postId}`);
+      if (form.style.display === 'none') {
+        form.style.display = 'flex';
+        section.style.display = 'block';
+        fetchComments(postId); // 버튼을 누를 때마다 최신 댓글 목록을 불러옴
+      } else {
+        form.style.display = 'none';
+        section.style.display = 'none';
+      }
+    }
+
+    async function fetchComments(postId) {
+      const res = await fetch(`${API_BASE}/${postId}/comments`);
+      if (!res.ok) return;
+      const json = await res.json();
+      const section = document.getElementById(`comments-${postId}`);
+      section.style.display = 'block';
+      if (!json.data || !json.data.length) {
+        section.innerHTML = '<div style="color:#888; font-size:0.95em; margin:6px 0 0 0;">댓글이 없습니다.</div>';
+        return;
+      }
+      section.innerHTML = json.data.map(c => `
+        <div style="background:#fff; border-radius:4px; margin:4px 0; padding:6px 10px; border:1px solid #eee;">
+          <b>${c.author || '익명'}</b>: ${c.content} <span style="color:#aaa; font-size:0.9em;">${c.createdAt ? new Date(c.createdAt).toLocaleString() : ''}</span>
+        </div>
+      `).join('');
+    }
+
+    async function addComment(postId) {
+      const author = document.getElementById(`comment-author-${postId}`).value.trim();
+      const content = document.getElementById(`comment-content-${postId}`).value.trim();
+      if (!content) return;
+      await fetch(`${API_BASE}/${postId}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ author, content })
+      });
+      document.getElementById(`comment-form-${postId}`).reset();
+      // 댓글 공간이 닫혀있으면 열고, 항상 최신 댓글을 보여줌
+      const section = document.getElementById(`comments-${postId}`);
+      section.style.display = 'block';
+      fetchComments(postId);
+      // 댓글 폼도 계속 보이게 유지
+      document.getElementById(`comment-form-${postId}`).style.display = 'flex';
+    }
+
+    function toggleQuestionForm(postId) {
+      const form = document.getElementById(`question-form-${postId}`);
+      const section = document.getElementById(`questions-${postId}`);
+      if (form.style.display === 'none') {
+        form.style.display = 'flex';
+        section.style.display = 'block';
+        fetchQuestions(postId);
+      } else {
+        form.style.display = 'none';
+        section.style.display = 'none';
+      }
+    }
+
+    async function fetchQuestions(postId) {
+      const res = await fetch(`${API_BASE}/${postId}/questions`);
+      if (!res.ok) return;
+      const json = await res.json();
+      const section = document.getElementById(`questions-${postId}`);
+      section.style.display = 'block';
+      if (!json.data || !json.data.length) {
+        section.innerHTML = '<div style="color:#b8860b; font-size:0.95em; margin:6px 0 0 0;">질문이 없습니다.</div>';
+        return;
+      }
+      section.innerHTML = json.data.map(q => `
+        <div style="background:#fff; border-radius:4px; margin:4px 0; padding:6px 10px; border:1px solid #ffe0b2;">
+          <b>${q.author || '익명'}</b>: ${q.content} <span style="color:#b8860b; font-size:0.9em;">${q.createdAt ? new Date(q.createdAt).toLocaleString() : ''}</span>
+        </div>
+      `).join('');
+    }
+
+    async function addQuestion(postId) {
+      const author = document.getElementById(`question-author-${postId}`).value.trim();
+      const content = document.getElementById(`question-content-${postId}`).value.trim();
+      if (!content) return;
+      await fetch(`${API_BASE}/${postId}/questions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ author, content })
+      });
+      document.getElementById(`question-form-${postId}`).reset();
+      const section = document.getElementById(`questions-${postId}`);
+      section.style.display = 'block';
+      fetchQuestions(postId);
+      document.getElementById(`question-form-${postId}`).style.display = 'flex';
+    }
+
+    function toggleDebateForm(postId) {
+      const section = document.getElementById(`debate-${postId}`);
+      if (section.style.display === 'none') {
+        section.style.display = 'block';
+        fetchDebate(postId);
+      } else {
+        section.style.display = 'none';
+      }
+    }
+
+    async function fetchDebate(postId) {
+      const res = await fetch(`${API_BASE}/${postId}/debate`);
+      if (!res.ok) return;
+      const json = await res.json();
+      const pros = document.getElementById(`pros-${postId}`);
+      const cons = document.getElementById(`cons-${post.id}`);
+      pros.innerHTML = '';
+      cons.innerHTML = '';
+      if (json.data && json.data.length) {
+        pros.innerHTML = json.data.filter(d => d.type === 'pro').map(d => `<div style="background:#fff; border-radius:4px; margin:2px 0; padding:4px 8px; border:1px solid #b3e5fc;"><b>${d.author || '익명'}</b>: ${d.content}</div>`).join('');
+        cons.innerHTML = json.data.filter(d => d.type === 'con').map(d => `<div style="background:#fff; border-radius:4px; margin:2px 0; padding:4px 8px; border:1px solid #ffcdd2;"><b>${d.author || '익명'}</b>: ${d.content}</div>`).join('');
+      }
+    }
+
+    async function addDebate(postId, type) {
+      const author = document.getElementById(`${type}-author-${postId}`).value.trim();
+      const content = document.getElementById(`${type}-content-${postId}`).value.trim();
+      if (!content) return;
+      await fetch(`${API_BASE}/${postId}/debate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ author, content, type })
+      });
+      document.getElementById(`${type}-author-${postId}`).value = '';
+      document.getElementById(`${type}-content-${postId}`).value = '';
+      fetchDebate(postId);
+    }
+
+    function toggleNewsForm() {
+      const form = document.getElementById('newsForm');
+      form.style.display = form.style.display === 'none' ? 'flex' : 'none';
+    }
+
+    async function fetchNews() {
+      const res = await fetch('http://crud.tlol.me/user1/news?page=1&pageSize=10');
+      if (!res.ok) return;
+      const json = await res.json();
+      const list = document.getElementById('newsList');
+      if (!json.data || !json.data.length) {
+        list.innerHTML = '<div style="color:#888;">등록된 소식/뉴스가 없습니다.</div>';
+        return;
+      }
+      list.innerHTML = json.data.map(news => `
+        <div style="background:#fff; border-radius:6px; border:1px solid #e0e0e0; margin-bottom:10px; padding:12px 16px;">
+          <div style="font-weight:bold; color:#1976d2;">${news.title}</div>
+          <div style="margin:6px 0;">${news.content}</div>
+          <div style="font-size:0.9em; color:#888;">${news.createdAt ? new Date(news.createdAt).toLocaleString() : ''}</div>
+          <div style="margin-top:8px;">
+            <button onclick="editNews('${news.id}', '${news.title.replace(/'/g, '\'')}', '${news.content.replace(/'/g, '\'')}')" style="background:#43a047; color:#fff; border:none; border-radius:4px; padding:4px 10px; margin-right:4px; cursor:pointer;">수정</button>
+            <button onclick="deleteNews('${news.id}')" style="background:#e53935; color:#fff; border:none; border-radius:4px; padding:4px 10px; cursor:pointer;">삭제</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    let editingNewsId = null;
+    function editNews(id, title, content) {
+      editingNewsId = id;
+      document.getElementById('news-title').value = title;
+      document.getElementById('news-content').value = content;
+      document.getElementById('newsForm').style.display = 'flex';
+      document.getElementById('news-title').focus();
+    }
+
+    async function deleteNews(id) {
+      if (!confirm('정말 삭제하시겠습니까?')) return;
+      await fetch(`http://crud.tlol.me/user1/news/${id}`, { method: 'DELETE' });
+      fetchNews();
+    }
+
+    async function addNews() {
+      const title = document.getElementById('news-title').value.trim();
+      const content = document.getElementById('news-content').value.trim();
+      if (!title || !content) return;
+      if (editingNewsId) {
+        await fetch(`http://crud.tlol.me/user1/news/${editingNewsId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, content })
+        });
+        editingNewsId = null;
+      } else {
+        await fetch('http://crud.tlol.me/user1/news', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, content })
+        });
+      }
+      document.getElementById('newsForm').reset();
+      fetchNews();
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+      // 뉴스 공간을 항상 렌더링
+      const newsArea = document.getElementById('newsArea');
+      if (newsArea) {
+        newsArea.innerHTML = `
+          <div class="news-block" style="margin:32px 0; padding:20px; border:2px solid #1976d2; border-radius:10px; background:#f0f7ff;">
+            <div style="font-weight:bold; color:#1976d2; font-size:1.15em; margin-bottom:8px;">역사 소식/뉴스 올리기</div>
+            <button onclick="toggleNewsForm()" class="comment-toggle" style="background:#1976d2; margin-bottom:12px;">소식/뉴스 작성하기</button>
+            <form id="newsForm" style="display:none; flex-direction:column; gap:8px; margin-bottom:16px;">
+              <input type="text" id="news-title" placeholder="제목" required style="padding:8px; border-radius:4px; border:1px solid #ccc;" />
+              <textarea id="news-content" placeholder="내용" rows="3" required style="padding:8px; border-radius:4px; border:1px solid #ccc;"></textarea>
+              <button type="submit" style="background:#1976d2; color:#fff;">등록</button>
+            </form>
+            <div id="newsList"></div>
+          </div>
+        `;
+        document.getElementById('newsForm').onsubmit = function(e) {
+          e.preventDefault();
+          addNews();
+        };
+        fetchNews();
+      }
+    });
+
+    fetchPosts();
+  </script>
+</body>
+</html>
